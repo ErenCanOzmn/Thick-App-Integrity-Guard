@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../IntegrityGuard/IntegrityGuard.csproj" />
+    <EmbeddedResource Include="../../.demo-keys/public.pem" LogicalName="DemoApp.public.pem" />
+    <None Include="demo-rules.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

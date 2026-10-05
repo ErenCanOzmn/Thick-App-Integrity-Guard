@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Version>0.3.0</Version>
+    <PackageId>IntegrityGuard</PackageId>
+    <RepositoryUrl>https://github.com/ErenCanOzmn/Thick-App-Integrity-Guard</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Description>Signed file snapshot verification for .NET applications. Not runtime attestation or anti-instrumentation protection.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../docs/INTEGRATION.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/DEPLOYMENT.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/NATIVE.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/EXAMPLE-APPS.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../samples/CustomerIntegration/ProtectedRules.cs" Pack="true" PackagePath="samples/CustomerIntegration/" />
+  </ItemGroup>
+</Project>

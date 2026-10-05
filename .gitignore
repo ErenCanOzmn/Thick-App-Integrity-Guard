@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+artifacts/
+.demo-keys/
+.dotnet-home/
+*.pem
+*.pfx
+*.p12
+*.snk
+.vs/
+*.user
+**/__pycache__/
+*.pyc

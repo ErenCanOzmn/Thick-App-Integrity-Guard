@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>IntegrityGuard.Native</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <NativeLib>Shared</NativeLib>
+    <Version>0.3.0</Version>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../IntegrityGuard/IntegrityGuard.csproj" /></ItemGroup>
+</Project>

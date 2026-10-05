@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CustomerIntegration/CustomerIntegration.csproj" />
+    <EmbeddedResource Include="../../.demo-keys/public.pem" LogicalName="QuoteConsole.public.pem" />
+    <None Update="rules.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
