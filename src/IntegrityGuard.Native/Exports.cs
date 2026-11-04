@@ -14,7 +14,10 @@ public enum NativeStatus
     NotVerified = 4, FileNotFound = 5, ResourceLimit = 6, InternalError = 7,
     InvalidConfiguration = 100, InvalidSignature = 101, InvalidManifest = 102,
     InvalidDigest = 103, RollbackRejected = 104, FileMismatch = 105,
-    MissingRequiredFile = 106, VerificationError = 107, SessionBlocked = 108
+    MissingRequiredFile = 106, VerificationError = 107, SessionBlocked = 108,
+    RuntimeDebuggerDetected = 200, RuntimeNativeEntryChanged = 201,
+    RuntimeInspectionError = 202, UnsupportedRuntimePlatform = 203,
+    RuntimeSessionBlocked = 204, InvalidRuntimeConfiguration = 205
 }
 
 public static unsafe class Exports
@@ -25,6 +28,39 @@ public static unsafe class Exports
     private static readonly Dictionary<ulong, State> Sessions = new();
     private static ulong nextHandle;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private static readonly object RuntimeGate = new();
+    private static RuntimeIntegritySession? RuntimeSession;
+    private static bool RuntimeFaulted;
+
+    // One process-lifetime runtime gate. File-session open/close cannot reset it.
+    [UnmanagedCallersOnly(EntryPoint = "ig_runtime_check", CallConvs = [typeof(CallConvCdecl)])]
+    public static int RuntimeCheck(int checkpoint)
+    {
+        lock (RuntimeGate)
+        {
+            if (RuntimeFaulted) return (int)NativeStatus.RuntimeSessionBlocked;
+            try
+            {
+                RuntimeSession ??= new RuntimeIntegritySession();
+                var result = RuntimeSession.Check((IntegrityCheckpoint)checkpoint);
+                return (int)(result.Code switch
+                {
+                    "RuntimeVerified" => NativeStatus.Ok,
+                    "RuntimeDebuggerDetected" => NativeStatus.RuntimeDebuggerDetected,
+                    "RuntimeNativeEntryChanged" => NativeStatus.RuntimeNativeEntryChanged,
+                    "UnsupportedRuntimePlatform" => NativeStatus.UnsupportedRuntimePlatform,
+                    "RuntimeSessionBlocked" => NativeStatus.RuntimeSessionBlocked,
+                    "InvalidRuntimeConfiguration" => NativeStatus.InvalidRuntimeConfiguration,
+                    _ => NativeStatus.RuntimeInspectionError
+                });
+            }
+            catch (Exception)
+            {
+                RuntimeFaulted = true;
+                return (int)NativeStatus.RuntimeInspectionError;
+            }
+        }
+    }
 
     private sealed class State(IntegritySession session)
     {

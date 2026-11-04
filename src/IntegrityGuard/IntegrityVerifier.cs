@@ -4,7 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace IntegrityGuard;
 
-public sealed record Manifest(int Version, Dictionary<string, string> Files, long Release = 1);
+public sealed record Manifest(
+    [property: JsonRequired] int Version,
+    [property: JsonRequired] Dictionary<string, string> Files,
+    [property: JsonRequired] long Release = 1);
 public sealed record VerificationResult(bool Success, string Code,
     IReadOnlyDictionary<string, byte[]> Files);
 
@@ -46,7 +49,9 @@ public static class IntegrityVerifier
             // Reject duplicate JSON properties rather than accepting last-value-wins parsing.
             using (var document = JsonDocument.Parse(manifestBytes, new JsonDocumentOptions { MaxDepth = 8 }))
                 if (HasDuplicateProperties(document.RootElement)) return Fail("InvalidManifest");
-            var manifest = JsonSerializer.Deserialize(manifestBytes, JsonContext.Manifest);
+            Manifest? manifest;
+            try { manifest = JsonSerializer.Deserialize(manifestBytes, JsonContext.Manifest); }
+            catch (JsonException) { return Fail("InvalidManifest"); }
             if (manifest is null || manifest.Version != 1 || manifest.Files is null ||
                 manifest.Release < 1 || manifest.Files.Count != expected.Count) return Fail("InvalidManifest");
             // This floor must be provided by a trusted host or service. This verifier

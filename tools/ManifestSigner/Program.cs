@@ -22,13 +22,23 @@ else if (args.Length >= 5 && args[0] == "sign")
     using var key = ECDsa.Create();
     key.ImportFromPem(File.ReadAllText(args[1]));
     var root = Path.GetFullPath(args[2]);
+    // Reject an invalid inventory before replacing an existing signed manifest.
+    var names = args.Skip(4).ToArray();
+    _ = new IntegrityPolicy(root, key.ExportSubjectPublicKeyInfoPem(), names, release);
+    if (names.Any(name => name.Equals("integrity.json", StringComparison.OrdinalIgnoreCase) ||
+                          name.Equals("integrity.sig", StringComparison.OrdinalIgnoreCase)))
+        throw new ArgumentException("The manifest and its signature cannot protect themselves.");
+    if (key.KeySize != 256)
+        throw new ArgumentException("A 256-bit ECDSA signing key is required.");
     var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    foreach (var name in args.Skip(4))
+    long totalBytes = 0;
+    foreach (var name in names)
     {
-        if (Path.GetFileName(name) != name || name.Contains(':'))
-            throw new ArgumentException("Only filenames within the output directory are supported.");
-        using var stream = File.OpenRead(Path.Combine(root, name));
+        using var stream = new FileStream(Path.Combine(root, name), FileMode.Open,
+            FileAccess.Read, FileShare.Read);
         if (stream.Length > IntegrityVerifier.MaxFileBytes) throw new IOException("File too large.");
+        totalBytes += stream.Length;
+        if (totalBytes > IntegrityVerifier.MaxTotalBytes) throw new IOException("Inventory too large.");
         files.Add(name, Convert.ToHexString(SHA256.HashData(stream)));
     }
     var bytes = JsonSerializer.SerializeToUtf8Bytes(new Manifest(1, files, release));

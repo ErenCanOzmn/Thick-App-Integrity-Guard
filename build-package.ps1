@@ -8,6 +8,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "dotnet failed: $LASTEXITCODE" }
     }
     Invoke-PackageDotnet run --project tests/ReviewTests/ReviewTests.csproj -c Release
+    Invoke-PackageDotnet run --project tests/RuntimeTests/RuntimeTests.csproj -c Release
     Invoke-PackageDotnet run --project tests/NativeInteropTests/NativeInteropTests.csproj -c Release
     Invoke-PackageDotnet build samples/CustomerIntegration/CustomerIntegration.csproj -c Release
     Invoke-PackageDotnet pack src/IntegrityGuard/IntegrityGuard.csproj -c Release -o artifacts/packages

@@ -1,40 +1,50 @@
-# Çalıştırılmış örnek uygulamalar
+# Example applications and observed behavior
 
-2026-10-06 tarihinde Windows üzerinde gerçek EXE süreçleriyle doğrulandı.
-Bu çalışma yalnız kütüphane unit testlerinden oluşmaz: uygulamalar ayrı süreçlerde
-başlatıldı, yalnız test kopyalarının dosyaları değiştirildi ve uygulama çıktıları okundu.
+[Overview](../README.md) · [Runtime checks](RUNTIME.md) · [Native ABI](NATIVE.md)
 
-## WinForms teklif uygulaması
+All examples use synthetic local data. The runtime DPAPI lab and the signed-file demos exercise different APIs.
 
-Çalıştırılabilir dosya: `artifacts/demo/DemoApp.exe`.
-Klasördeki DLL, runtimeconfig/deps, kurallar, manifest ve imza dosyaları birlikte
-kalmalıdır. Çalıştırmak için Windows .NET 8 Desktop Runtime gerekir.
+## Runtime DPAPI lab
 
-Pencere, imzalı kurallardan teklif hesaplar. Açılışta, beş saniyede bir ve işlem
-öncesinde kontrol yapar. İlk başarısızlık sonrası teklif düğmesi oturum boyunca
-engellenir. Bu demoda altı dağıtım dosyası manifestte yer alır; doğrulama yüklü
-koda güvenilir başlangıç veya bellek bütünlüğü garantisi vermez.
+Build/run:
 
-GUI testinde gizli başlatılan pencereye UI Automation erişemedi. Ardından
-Windows pencere/kontrol API'siyle aynı uygulamanın gerçek kontrolleri gözlendi,
-teklif düğmesine tıklama mesajı gönderildi ve modal diyalog okundu. Uygulamaya
-test sonuçlarını taklit eden bir çalışma modu eklenmedi.
+```powershell
+.\build-runtime.ps1
+.\artifacts\runtime-probe\RuntimeProbe.exe
+```
 
-| Kontrol | Gözlenen sonuç |
+Use `check`, `use`, and `exit`. `use` performs the runtime gate before unprotecting synthetic data. It returns JSON Lines containing the decision and a comparison hash, not plaintext. The startup check runs before generating/protecting the sample data.
+
+`--unguarded` selects the comparison mode. It is a lab-only option.
+
+See [RUNTIME.md](RUNTIME.md) for post-startup instrumentation comparisons and the actual-native-DLL Python test host.
+
+## Signed-file WinForms demo
+
+Executable: `artifacts/demo/DemoApp.exe`. Keep its DLLs, runtimeconfig/deps files, rules, manifest, and signature together. It requires the Windows .NET 8 Desktop Runtime.
+
+The application calculates a synthetic quote from signed rules. It checks startup, every five seconds, and before the operation. The first failure disables the quote button for that session.
+
+The manifest covers six distribution files. This happens after application code is loaded and does not establish a trusted boot/loading boundary.
+
+Six local GUI checks passed:
+
+| Check | Observed behavior |
 | --- | --- |
-| Temiz açılış | `DOGRULANDI`, düğme açık |
-| Gerçek teklif düğmesi | Diyalogda `Demo hizmet: 125,00 TL` |
-| Çalışırken kurallar değişti | `FileMismatch`, düğme kapalı |
-| Dosya aynı oturumda onarıldı | Altı saniye sonra da düğme kapalı |
-| Onarım sonrası yeniden başlatma | Doğrulama başarılı, düğme açık |
-| Değiştirilmiş dosyayla açılış | `FileMismatch`, düğme kapalı |
+| Clean startup | `DOGRULANDI`, button enabled |
+| Actual quote button | Modal dialog shows `Demo hizmet: 125,00 TL` |
+| Rules changed while running | `FileMismatch`, button disabled |
+| Original file restored | Button still disabled after six seconds |
+| Restart after repair | Verification succeeds, button enabled |
+| Tampered startup | `FileMismatch`, button remains disabled |
 
-GUI raporu: `artifacts/application-tests/gui-<run-id>/gui-report.json`.
+The demo retains its original UI labels. Tests observed real Windows controls, sent the actual button-click message, and read the modal dialog. No mode was added to fabricate GUI results.
 
-## Konsol teklif uygulaması
+Report: `artifacts/application-tests/gui-<run>/gui-report.json`.
 
-Çalıştırılabilir dosya: `artifacts/apps/QuoteConsole/QuoteConsole.exe`.
-Klasörün tamamını koruyun; .NET 8 Runtime gerekir. Konsola şu komutları yazın:
+## Signed-file console demo
+
+Executable: `artifacts/apps/QuoteConsole/QuoteConsole.exe`. Keep its distribution folder intact; it requires the .NET 8 Runtime.
 
 ```text
 quote 2
@@ -42,38 +52,30 @@ check
 exit
 ```
 
-Çıktı JSON Lines biçimindedir. Temiz uygulamada iki ürün için toplam `251.00`
-hesaplanır. `ProtectedRules` müşteri örneğini doğrudan kullanır; bu uygulamada
-imzalanan kapsam yalnız `rules.json` dosyasıdır, EXE/DLL dosyaları değildir.
-Dosya bütünlüğü başarılı olsa bile ürün/fiyat şeması ayrıca doğrulanır.
+Responses are JSON Lines. Two units total `251.00` in the clean example. It uses `ProtectedRules` directly and signs only `rules.json`, not its EXE/DLL. Required business fields and ranges are validated after file verification.
 
-Gerçek süreç testlerinin 7/7'si geçti:
+Seven process scenarios passed:
 
-- Temiz teklif hesabı ve negatif miktarın reddi.
-- Çalışırken dosya değişikliği → `FileMismatch`; onarım → `SessionBlocked`;
-  yeniden başlatma → başarılı teklif.
-- Değiştirilmiş dosyayla açılış → `FileMismatch`, exit 1.
-- Eksik dosyayla açılış → `VerificationError`, exit 1.
-- Bozulmuş imzayla açılış → `InvalidSignature`, exit 1.
-- Geçerli imzalı ama fiyat alanı eksik veri → `InvalidBusinessRules`.
-- WinForms EXE `--verify`: temiz exit 0, değiştirilmiş dosya exit 1.
+- Clean quote calculation and negative quantity rejection.
+- Live tampering produces `FileMismatch`; repair keeps `SessionBlocked`; restart recovers.
+- Changed startup file returns `FileMismatch`, exit 1.
+- Missing startup file returns `VerificationError`, exit 1.
+- Invalid signature returns `InvalidSignature`, exit 1.
+- Validly signed data missing its price returns `InvalidBusinessRules`.
+- WinForms `--verify` returns 0 for clean files and 1 after tampering.
 
-Süreç raporu: `artifacts/application-tests/<run-id>/process-report.json`.
-Raporlar yalnız denenen kontrollerin sonuçlarıdır; Frida/bellek müdahalesi testi değildir.
+Report: `artifacts/application-tests/<run>/process-report.json`.
 
-## Yeniden derleme ve test
+## Build and test the signed-file apps
 
 ```powershell
 .\build-example-apps.ps1
 ```
 
-Bu betik demo anahtarı gerekiyorsa oluşturur, uygulamaları derler ve imzalar,
-kütüphane regresyon testlerini ve iki gerçek uygulamanın testlerini çalıştırır.
-GUI testleri kullanıcı masaüstü oturumu ve Windows pencere API'lerine erişim
-gerektirir; headless servis oturumunda başarısız olabilir. Testler sadece kendi
-başlattıkları süreçleri kapatır ve benzersiz test kopyalarını değiştirir.
-Test kopyaları inceleme için artifacts altında bırakılır. Anahtarlar paylaşılmaz.
+The script creates development keys if needed, builds/signs the apps, runs library and signer regressions, and exercises real processes/controls. GUI tests require a usable Windows desktop session and can fail in a headless service session.
 
-Native C/Lua örnekleri bu testlere dahil değildir. Gerçek NativeAOT DLL ve Lua
-runtime doğrulaması henüz tamamlanmadı. Bunların gereksinimleri ve ayrı kabul
-adımları [native entegrasyon rehberinde](NATIVE.md) açıklanır.
+Tests modify unique copies under `artifacts`, close only processes they launched, and retain their reports. Development signing keys are not distribution assets.
+
+These demos do not automatically use the runtime gate. Their successful file/GUI results are not runtime-instrumentation resistance evidence.
+
+The native DLL has separate ABI and C/Python consumer tests. Lua runtime validation remains incomplete.

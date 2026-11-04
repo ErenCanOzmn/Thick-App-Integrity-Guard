@@ -19,6 +19,7 @@ var tests = new (string, Action)[] {
     ("invalid checkpoint blocks session", Checkpoint),
     ("session resource limit and recovery", Limits),
     ("concurrent independent callers", Concurrent),
+    ("runtime gate succeeds clean and cannot reset after invalid phase", RuntimeGate),
 };
 var failed = 0;
 foreach (var (name, run) in tests)
@@ -190,6 +191,14 @@ static void Concurrent()
     });
 }
 
+static void RuntimeGate()
+{
+    Expect(Api.RuntimeCheck(0) == 0, "clean runtime startup failed");
+    Expect(Api.RuntimeCheck(2) == 0, "clean runtime pre-operation failed");
+    Expect(Api.RuntimeCheck(999) == 205, "invalid runtime checkpoint not rejected");
+    Expect(Api.RuntimeCheck(0) == 204, "runtime failure latch was reset");
+}
+
 static unsafe class Api
 {
     private static delegate* unmanaged[Cdecl]<uint> VersionPtr;
@@ -197,10 +206,12 @@ static unsafe class Api
     private static delegate* unmanaged[Cdecl]<ulong, int, int> CheckPtr;
     internal static delegate* unmanaged[Cdecl]<ulong, byte*, uint, byte*, uint, uint*, int> CopyPtr;
     private static delegate* unmanaged[Cdecl]<ulong, int> ClosePtr;
+    private static delegate* unmanaged[Cdecl]<int, int> RuntimeCheckPtr;
 
     internal static uint Version() => VersionPtr();
     internal static int Check(ulong handle, int checkpoint) => CheckPtr(handle, checkpoint);
     internal static int Close(ulong handle) => ClosePtr(handle);
+    internal static int RuntimeCheck(int checkpoint) => RuntimeCheckPtr(checkpoint);
 
     internal static void Initialize(string? path)
     {
@@ -208,6 +219,7 @@ static unsafe class Api
         {
             VersionPtr = &Exports.AbiVersion; OpenPtr = &Exports.Open; CheckPtr = &Exports.Check;
             CopyPtr = &Exports.CopyFile; ClosePtr = &Exports.Close;
+            RuntimeCheckPtr = &Exports.RuntimeCheck;
         }
         else
         {
@@ -218,6 +230,7 @@ static unsafe class Api
             CheckPtr = (delegate* unmanaged[Cdecl]<ulong, int, int>)NativeLibrary.GetExport(library, "ig_check");
             CopyPtr = (delegate* unmanaged[Cdecl]<ulong, byte*, uint, byte*, uint, uint*, int>)NativeLibrary.GetExport(library, "ig_copy_file");
             ClosePtr = (delegate* unmanaged[Cdecl]<ulong, int>)NativeLibrary.GetExport(library, "ig_close");
+            RuntimeCheckPtr = (delegate* unmanaged[Cdecl]<int, int>)NativeLibrary.GetExport(library, "ig_runtime_check");
         }
     }
 

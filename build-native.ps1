@@ -13,6 +13,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "dotnet failed: $LASTEXITCODE" }
     }
     Invoke-NativeDotnet run --project tests/ReviewTests -c Release
+    Invoke-NativeDotnet run --project tests/RuntimeTests -c Release
     Invoke-NativeDotnet run --project tests/NativeInteropTests -c Release
     # Requires Visual Studio Build Tools: Desktop development with C++ and Windows SDK.
     # Do not distribute the managed DLL from bin/ if publish fails.
@@ -32,6 +33,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Python native consumer tests failed.' }
     Copy-Item -LiteralPath native/include/integrity_guard.h -Destination artifacts/native/win-x64
     Copy-Item -LiteralPath docs/NATIVE.md -Destination artifacts/native/win-x64
+    Copy-Item -LiteralPath docs/RUNTIME.md -Destination artifacts/native/win-x64
     Write-Host 'Native DLL passed ABI and Python consumer tests. Output: artifacts/native/win-x64'
 }
 finally { Pop-Location }

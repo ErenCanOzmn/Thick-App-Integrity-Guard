@@ -15,6 +15,10 @@ var tests = new (string Name, Action Body)[]
     ("unsafe required filename is rejected", UnsafeRequiredNameFails),
     ("malformed public key does not escape verifier", MalformedPublicKeyFailsSafely),
     ("signed manifest with unknown member fails closed", UnknownManifestMemberFails),
+    ("signed manifest requires explicit version files and release", MissingManifestMembersFail),
+    ("signed manifest rejects incorrect member types", IncorrectManifestTypesFail),
+    ("signed null inventory is rejected", NullManifestInventoryFails),
+    ("partial verification never returns earlier snapshots", PartialVerificationReturnsNoFiles),
     ("previously signed release cannot be replayed", SignedReleaseRollbackFails),
     ("non-positive signed release is rejected", NonPositiveReleaseFails),
     ("non-positive minimum release is invalid configuration", NonPositiveMinimumReleaseFails),
@@ -93,7 +97,7 @@ static void DuplicateFilePropertyFails()
 {
     using var fixture = new Fixture("original");
     var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("original")));
-    var json = $"{{\"Version\":1,\"Files\":{{\"{Fixture.FileName}\":\"{digest}\",\"PAYLOAD.BIN\":\"{digest}\"}}}}";
+    var json = $"{{\"Version\":1,\"Release\":1,\"Files\":{{\"{Fixture.FileName}\":\"{digest}\",\"PAYLOAD.BIN\":\"{digest}\"}}}}";
     fixture.WriteSignedManifest(Encoding.UTF8.GetBytes(json));
     var result = fixture.Verify();
     Require(!result.Success && result.Code == "InvalidManifest", $"unexpected result: {result.Code}");
@@ -133,10 +137,71 @@ static void UnknownManifestMemberFails()
 {
     using var fixture = new Fixture("original");
     var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("original")));
-    var json = $"{{\"Version\":1,\"Files\":{{\"{Fixture.FileName}\":\"{digest}\"}},\"Extra\":true}}";
+    var json = $"{{\"Version\":1,\"Release\":1,\"Files\":{{\"{Fixture.FileName}\":\"{digest}\"}},\"Extra\":true}}";
     fixture.WriteSignedManifest(Encoding.UTF8.GetBytes(json));
     var result = fixture.Verify();
     Require(!result.Success, "unknown manifest member was accepted");
+}
+
+static void MissingManifestMembersFail()
+{
+    using var fixture = new Fixture("original");
+    var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("original")));
+    var members = new Dictionary<string, object>
+    {
+        ["Version"] = 1,
+        ["Files"] = new Dictionary<string, string> { [Fixture.FileName] = digest },
+        ["Release"] = 1
+    };
+    foreach (var missing in members.Keys)
+    {
+        fixture.WriteSignedManifest(JsonSerializer.SerializeToUtf8Bytes(
+            members.Where(entry => entry.Key != missing).ToDictionary()));
+        var result = fixture.Verify();
+        Require(!result.Success && result.Code == "InvalidManifest" && result.Files.Count == 0,
+            $"missing {missing} accepted or misclassified: {result.Code}");
+    }
+}
+
+static void IncorrectManifestTypesFail()
+{
+    using var fixture = new Fixture("original");
+    foreach (var json in new[]
+    {
+        "{\"Version\":\"1\",\"Files\":{},\"Release\":1}",
+        "{\"Version\":1,\"Files\":[],\"Release\":1}",
+        "{\"Version\":1,\"Files\":{},\"Release\":null}",
+        "{\"Version\":1,\"Files\":{},\"Release\":1.5}"
+    })
+    {
+        fixture.WriteSignedManifest(Encoding.UTF8.GetBytes(json));
+        var result = fixture.Verify();
+        Require(!result.Success && result.Code == "InvalidManifest" && result.Files.Count == 0,
+            $"incorrect member type accepted or misclassified: {result.Code}");
+    }
+}
+
+static void NullManifestInventoryFails()
+{
+    using var fixture = new Fixture("original");
+    fixture.WriteSignedManifest(Encoding.UTF8.GetBytes("{\"Version\":1,\"Files\":null,\"Release\":1}"));
+    var result = fixture.Verify();
+    Require(!result.Success && result.Code == "InvalidManifest", result.Code);
+}
+
+static void PartialVerificationReturnsNoFiles()
+{
+    using var fixture = new Fixture("original");
+    File.WriteAllText(Path.Combine(fixture.Root, "second.bin"), "changed");
+    fixture.WriteSignedManifest(JsonSerializer.SerializeToUtf8Bytes(new Manifest(1,
+        new Dictionary<string, string>
+        {
+            [Fixture.FileName] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("original"))),
+            ["second.bin"] = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("expected")))
+        })));
+    var result = IntegrityVerifier.Verify(fixture.Root, fixture.PublicKey, [Fixture.FileName, "second.bin"]);
+    Require(!result.Success && result.Code == "FileMismatch" && result.Files.Count == 0,
+        "earlier verified file escaped after a later failure");
 }
 
 static void SignedReleaseRollbackFails()

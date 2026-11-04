@@ -5,7 +5,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <NativeLib>Shared</NativeLib>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../IntegrityGuard/IntegrityGuard.csproj" /></ItemGroup>
 </Project>

@@ -1,55 +1,63 @@
 # Native C ABI v1 — Windows x64
 
-## Doğrulama durumu
+[Overview](../README.md) · [Runtime checks](RUNTIME.md) · [Signed-file integration](INTEGRATION.md)
 
-Bu sürümün native giriş noktaları managed test sürecinde çağrı kuralı ve pointer
-aracılığıyla test edilmiştir. 12 giriş noktası testi geçmiştir; gerçek NativeAOT DLL,
-C istemci, Lua 5.4 ve LuaJIT runtime doğrulaması henüz tamamlanmamıştır.
-Native kaynakların bulunması, test edilmiş bir native ürün sağlandığı anlamına gelmez.
-Müşteri dağıtımından önce aşağıdaki araçlarla derleyip gerçek DLL ve dil
-bağlayıcılarının kabul testlerini kendi ortamınızda tamamlayın.
+## Artifacts and validation
 
-## Derleme
+The 0.4.0 Windows x64 NativeAOT DLL was built and tested locally. Thirteen ABI tests passed in a managed test host and again against the actual native DLL. Five external file-consumer tests exercised Python ctypes and an MSVC C executable. Six additional runtime-instrumentation scenarios passed in a Python host using the actual DLL.
 
-Windows x64 build host, .NET 8 SDK, Visual Studio 2022 Build Tools'un
-**Desktop development with C++** araçları ve Windows SDK gerekir.
-Testler ayrıca Python 3 ve CMake kullanır. [Microsoft NativeAOT önkoşulları](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/).
+Build environment: .NET SDK 10.0.403 targeting net8.0, Visual Studio Build Tools 2026, MSVC 19.51, Windows SDK 10.0.26100.0. Lua 5.4/LuaJIT runtime validation is not complete. These results do not replace application-specific acceptance tests.
+
+## Build
+
+Requirements: Windows x64, .NET 8 or a compatible newer SDK, Visual Studio C++ Build Tools, Windows SDK, CMake, and Python 3.
 
 ```powershell
 .\build-native.ps1
 ```
 
-Betik managed regresyon ve giriş noktası testlerini çalıştırır; NativeAOT publish
-yapar; aynı ABI testlerini gerçek DLL üzerinden tekrar çalıştırır. Ardından C
-örneğini derler ve Python/C dış istemci testlerini çalıştırır. Her hata betiği durdurur.
-Başarılı çıktı `artifacts/native/win-x64/IntegrityGuard.Native.dll` ve `.lib` olur.
-Normal `bin/Release/net8.0/...` managed DLL dosyasını native diye dağıtmayın.
-Bu betik sistem araçlarını kurmaz veya paketleri yayımlamaz.
+The script runs managed regressions, runtime tests, and ABI checks; publishes NativeAOT; reruns ABI checks against the real DLL; builds a C consumer; and runs Python/C consumer tests. Any failed step stops the build.
 
-Native kitaplık self-contained olduğundan son kullanıcıda .NET kurulumu gerekmez.
-NativeAOT DLL'i süreç boyunca yüklü kalmalıdır; `FreeLibrary`/`dlclose` desteklenmez.
-[Microsoft native kütüphane belgesi](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/libraries).
-Lua bağlayıcıları Windows'ta DLL'i pinler. Oturum kapatma DLL'i boşaltmaz.
+Output: `artifacts/native/win-x64/IntegrityGuard.Native.dll`, its import library, and the header. Do not distribute a normal managed DLL from `bin/` as the native artifact.
 
-## Sözleşme
+The native library is self-contained and needs no installed .NET runtime in the consuming process. It must remain loaded until process exit: NativeAOT `FreeLibrary`/`dlclose` unloading is unsupported. Closing a session does not unload the library. See [Microsoft's native library contract](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/libraries).
 
-Header: `native/include/integrity_guard.h`. Cdecl, ABI sürümü 1, sabit genişlikli
-integer türleri kullanılır. Handle `uint64_t`'dir; pointer veya Lua number değildir.
-Tüm string girişleri uzunluğu ayrıca verilen UTF-8 baytlardır; sonlandırıcı NUL
-gerekmez. Caller pointer'ları belirtilen uzunlukta geçerli tutmalıdır; yanlış
-adresleri API doğrulayamaz ve süreç çökebilir. Pointer giriş/çıkış bölgeleri
-birbiriyle örtüşmemelidir. ABI güvenilmeyen süreç içi kod için izolasyon değildir.
+## Calling convention and ownership
 
-| Çağrı | İşlev |
+Use [integrity_guard.h](../native/include/integrity_guard.h). The ABI uses cdecl and fixed-width integer types. A session handle is `uint64_t`, not a pointer or Lua floating-point number.
+
+String arguments are explicit-length UTF-8 bytes; no NUL terminator is required. Caller pointers must be valid for the declared length, and input/output regions must not overlap. Invalid addresses can crash the process. The ABI is not isolation from untrusted in-process code.
+
+| Function | Purpose |
 | --- | --- |
-| `ig_abi_version()` | 1 döndürür; sürümü açılışta kontrol edin |
-| `ig_open(json, length, &handle)` | Politikayı kopyalar, oturum açar; henüz dosya doğrulamaz |
-| `ig_check(handle, phase)` | Tam doğrulama; başarılıysa doğrulanmış kopyaları saklar |
-| `ig_copy_file(handle, name, length, buffer, capacity, &written)` | Son başarılı kontroldeki dosyanın baytlarını caller tamponuna kopyalar |
-| `ig_close(handle)` | Kütüphanenin oturum ve kopya referanslarını bırakır |
+| `ig_abi_version()` | Returns 1 |
+| `ig_runtime_check(phase)` | Process-lifetime debugger/native-entry gate |
+| `ig_open(json, length, &handle)` | Copies a signed-file policy; does not verify files yet |
+| `ig_check(handle, phase)` | Replaces the saved file snapshots after full verification |
+| `ig_copy_file(...)` | Copies bytes from the last successful snapshot, never reopens disk |
+| `ig_close(handle)` | Releases the file session and snapshot references |
 
-`ig_open` yapılandırmasının tüm alanları zorunludur; bilinmeyen veya tekrarlanan
-alanlar reddedilir. JSON en fazla 128 KiB olabilir. Kök dizin absolute olmalıdır.
+`ig_runtime_check` is additive to ABI v1 in 0.4.0. An older v1 DLL may lack that export; the ABI version alone does not establish its presence. Existing file functions do not invoke the runtime gate automatically.
+
+## Runtime gate
+
+Call `ig_runtime_check` at startup and immediately before sensitive operations. Phases: 0 startup, 1 periodic, 2 before operation. The first failure latches the gate for the process lifetime; file-session open/close cannot reset it.
+
+| Status | Meaning |
+| --- | --- |
+| 0 | Runtime check succeeded |
+| 200 | Debugger detected |
+| 201 | Selected entry bytes changed |
+| 202 | Inspection, PE, relocation, export, or read failure |
+| 203 | Unsupported platform |
+| 204 | Runtime gate already blocked |
+| 205 | Invalid checkpoint |
+
+The [runtime guide](RUNTIME.md) explains the four default targets, comparison window, disk trust, false positives, and check/call race.
+
+## Signed-file policy
+
+All configuration fields are required. Unknown/duplicate members are rejected. JSON is limited to 128 KiB and the root must be absolute.
 
 ```json
 {
@@ -60,49 +68,58 @@ alanlar reddedilir. JSON en fazla 128 KiB olabilir. Kök dizin absolute olmalıd
 }
 ```
 
-Bu JSON sadece biçim örneğidir; gerçek public key gerekir. JSON'u production'da
-uygulamanın güvenilen yapılandırmasından üretin. Kullanıcının değiştirebildiği
-dosyadan public key veya minimum sürüm yükleyip güvenmeyin. Private key verilmez.
-Dosya envanteri imzalı manifest ile tam eşleşmelidir.
+This is a format example, not a working key. Construct it from trusted host settings. Do not accept a replaceable file's key/floor as authoritative. Never pass the signing private key.
 
-Phase: 0 başlangıç, 1 periyodik, 2 işlem öncesi. Her kontrol önce eski kopyaları
-bırakır. Başarısızlık oturumu engeller; sonraki kontrol 108 döndürür. Başarısız
-kontrolden sonra `ig_copy_file` 4 döndürür, eski doğrulanmış içerik verilmez.
-Oturum başına managed API'deki 32 dosya / 64 MiB toplam sınırları geçerlidir.
-Süreç başına en fazla 16 native oturum vardır. Kapatılan handle yeniden kullanılmaz.
+The signed manifest must exactly match the required inventory. Limits are 32 files, 32 MiB per file, and 64 MiB total. There are at most 16 native file sessions per process. Closed handles are not reused.
 
-## Bellek ve eşzamanlılık
+Every `ig_check` clears the old snapshot first. Failure blocks the session; later checks return 108 and copies return 4. A stale successful snapshot is not exposed after a failed recheck.
 
-Önce `destination=NULL, capacity=0` ile boyut sorun. Dolu dosyada 3, boş dosyada
-0 döner. Caller gereken tamponu ayırır ve ikinci çağrıda baytları alır. 3 dönerse
-tampona hiçbir şey yazılmaz. `written` 0/3 sonuçlarında kopyalanan/gerekli boyuttur;
-diğer sonuçlarda 0 olur. Dosya içindeki NUL baytları korunur; string sonlandırıcı
-eklenmez. Caller kendi tamponunu kendi allocator'ıyla serbest bırakır.
+## Buffers and concurrency
 
-`ig_close` snapshot referanslarını bırakır; GC fiziksel geri kazanım zamanını
-yönetir, sıfırlama garantisi verilmez. Caller'a kopyalanmış baytlar caller'a aittir;
-oturum kapatılınca geri alınamaz. Hassas tamponların yaşam süresini host yönetir.
+Query size with `destination=NULL, capacity=0`: a nonempty file returns 3; an empty file returns 0. Allocate the destination and call again. A short buffer receives no bytes. `written` contains required size on status 3, copied size on 0, and zero on other statuses.
 
-Oturum başına tek workflow sahibi kullanın. Tek çağrılar kilitlidir fakat check,
-boyut sorgusu, kopyalama ve iş işlemi birlikte atomik değildir. Bunları başka
-thread'lerde aynı handle üzerinde iç içe çalıştırmayın. Ayrı oturumlar kullanılabilir.
-İşlem sırasında diski yeniden okumayın; Lua `load` fonksiyonuna alınan baytları verin.
+Embedded NUL bytes are preserved and no string terminator is appended. The caller allocates/frees its own buffers; no cross-runtime allocator is involved.
 
-## Sonuç kodları
+`ig_close` drops references, but GC reclamation time and zeroization are not guaranteed. Bytes already copied to the caller remain the caller's responsibility.
 
-0 başarı; 1 geçersiz ABI argümanı; 2 geçersiz/kapalı handle; 3 küçük tampon;
-4 henüz doğrulanmış kopya yok; 5 istenen isim doğrulanmış listede yok;
-6 oturum sınırı; 7 beklenmeyen iç hata.
+Calls are individually locked. Check, size query, copy, and the business operation are not one atomic transaction. Use one serialized workflow owner per handle. Separate sessions may be used concurrently.
 
-100 geçersiz politika; 101 geçersiz imza; 102 geçersiz manifest;
-103 geçersiz digest; 104 eski sürüm; 105 dosya değişmiş;
-106 eksik manifest girdisi; 107 dosya/kriptografi/erişim doğrulama hatası;
-108 oturum engellenmiş. Hatalar exception nesnesi olarak ABI dışına çıkmaz;
-bozuk pointer/stack overflow gibi ölümcül süreç hatalarına kurtarma garantisi yoktur.
+## File API statuses
+
+```text
+0    success
+1    invalid ABI argument
+2    invalid/closed handle
+3    buffer too small
+4    no verified snapshot
+5    requested filename absent
+6    session/resource limit
+7    unexpected internal error
+100  invalid policy
+101  invalid signature
+102  invalid manifest
+103  invalid digest
+104  rejected release rollback
+105  file mismatch
+106  missing manifest entry
+107  file/cryptographic/access verification error
+108  file session blocked
+```
+
+Managed exception objects do not cross the ABI. Fatal faults such as bad pointers or stack overflow have no recovery guarantee.
+
+## Python and C/C++
+
+`bindings/python/integrity_guard.py` supplies the signed-file API with standard-library `ctypes`. Use a context manager or `close()`; `read(name)` returns verified `bytes`, and `IntegrityError.code` carries native failures.
+
+The runtime test host is `tests/native_runtime_probe.py`. It explicitly binds `ig_runtime_check`; the existing file-binding `Session.check()` remains a file check.
+
+The C consumer is under `samples/native-c`. Link with the native import library and load the DLL from a trusted directory.
 
 ## LuaJIT 2.1
 
-`bindings/luajit` dizinini uygulamanın güvenilen `package.path` ayarına ekleyin.
+Add `bindings/luajit` to a trusted `package.path`:
+
 ```lua
 local guard = require("integrity_guard")
 local session, code = guard.open(native_dll_absolute_path, trusted_config_json)
@@ -115,15 +132,11 @@ assert(chunk, err)
 return chunk()
 ```
 
-`samples/luajit/run_verified.lua` işlem hatasında da close yapan örnektir.
-Handle ffi `uint64_t` olarak tutulur. Buffers LuaJIT'e aittir. Sonlandırıcı GC
-yardımı vardır; uygulama yine de `close()` çağırmalıdır. `read()` her seferinde
-kontrol yapar; `check()` / `close()` boolean+kod, `read()` string+kod veya nil+kod döndürür.
+`samples/luajit/run_verified.lua` handles close on errors. Handles remain FFI `uint64_t`. Buffers belong to LuaJIT; GC finalization is a fallback, not a substitute for explicit close.
 
-## Standart Lua 5.4
+## Lua 5.4
 
-`bindings/lua54` gerçek Lua C API modülüdür; LuaJIT modülüyle değiştirilemez.
-Host ile aynı x64 mimaride Lua 5.4 header ve import library'si gerekir.
+`bindings/lua54` is a distinct Lua C API module, not the LuaJIT binding. It needs matching x64 Lua 5.4 headers/import library:
 
 ```powershell
 cmake -S bindings/lua54 -B artifacts/lua54 -A x64 `
@@ -132,28 +145,14 @@ cmake -S bindings/lua54 -B artifacts/lua54 -A x64 `
 cmake --build artifacts/lua54 --config Release
 ```
 
-Yollar örnektir. Oluşan `integrity_guard.dll` modülünü, `IntegrityGuard.Native.dll`
-bağımlılığını ve host'un Lua runtime'ını güvenilen uygulama dizinine yerleştirin.
-Host DLL arama politikasını bu güvenilen dizinle sınırlandırmalıdır. Modülü
-uygulamanın belirlediği absolute yoldan yükleyip `require` için kaydedin.
-`guard.open(trusted_config_json)` bir userdata oturumu döndürür. `read/check/close`
-LuaJIT ile aynı davranır. `__gc` ve Lua 5.4 `<close>` desteği vardır.
-Örnek: `samples/lua54/run_verified.lua`; tüketici testi: `tests/lua_consumer.lua`.
+Paths are examples. Place the module and dependencies in a trusted application directory and restrict DLL search. Load/register the module from an application-controlled absolute path. The example is `samples/lua54/run_verified.lua`; the consumer test is `tests/lua_consumer.lua`.
 
-Lua kaynak kodu metin moduyla yüklenir. İmza güvenilirliği, betiğin işlevsel olarak
-güvenli olduğunu veya verilen Lua environment'ın sandbox olduğunu kanıtlamaz.
-[Lua 5.4 resmi API belgesi](https://www.lua.org/manual/5.4/manual.html).
+Pass verified bytes to Lua `load` in text mode rather than reopening the file. A signature does not prove that a script is functionally safe or that the supplied environment is a sandbox.
 
-## Python ve C/C++
+The bundled Lua bindings expose signed-file workflows; adding the native runtime export to a Lua host requires explicit integration and tests. Their runtime support is not claimed as verified.
 
-Python bağlayıcısı `bindings/python/integrity_guard.py` içinde, yalnız standart
-`ctypes` kullanır. `with Session(...):` veya `close()` ile oturumu bırakın.
-`read(name)` doğrulanmış `bytes` döndürür; hata `IntegrityError.code` ile bildirilir.
-C/C++ istemci header ve native `.lib` ile linklenir; örnek `samples/native-c`.
+## Scope
 
-## Kapsam
+Windows x64 is the verified target. Linux, macOS, ARM64, .NET Framework, and Lua 5.1/5.2/5.3 C modules are not supported release artifacts.
 
-Windows x64 ilk hedeftir. Linux/macOS/ARM64 çıktısı, .NET Framework paketi,
-Lua 5.1/5.2/5.3 C modülü bu sürümde sunulmaz. Native derleme dosya bütünlüğü
-algoritmasını değiştirmez; süreç içi kontrol sonuçları değiştirilebilir ve
-bellekteki verinin gizliliği garanti edilmez.
+Native compilation does not change the trust boundary: local results can be manipulated, and process-memory confidentiality is not guaranteed.

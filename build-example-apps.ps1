@@ -4,6 +4,8 @@ try {
     # Builds/signs the real WinForms executable and verifies existing library tests.
     & ./build-demo.ps1
     if (!$?) { throw 'WinForms demo build failed.' }
+    & python tests/signer_process_tests.py
+    if ($LASTEXITCODE -ne 0) { throw 'Signer process tests failed.' }
     $env:DOTNET_CLI_HOME = Join-Path $PSScriptRoot '.dotnet-home'
     & dotnet build samples/QuoteConsole/QuoteConsole.csproj -c Release -o artifacts/apps/QuoteConsole
     if ($LASTEXITCODE -ne 0) { throw 'QuoteConsole build failed.' }

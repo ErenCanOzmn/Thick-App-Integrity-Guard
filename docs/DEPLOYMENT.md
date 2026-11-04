@@ -1,89 +1,71 @@
-# Dağıtım, obfuscation ve müşteri kabulü
+# Deployment and release acceptance
 
-## Hazırlık
+[Overview](../README.md) · [Runtime checks](RUNTIME.md) · [Signed files](INTEGRATION.md)
 
-Üretime dahil etmeden önce dosya envanterini, kritik işlem noktalarını, OS/runtime
-desteğini, çevrimdışı davranışı, hata tepkisini ve onarım sürecini müşteriyle belirleyin.
-Örnek uygulamadaki varsayımlar doğrudan müşteri uygulamasının gereksinimleri sayılmaz.
+## Plan the integration
 
-Her müşteri/ürün için anahtar yaşam döngüsü tanımlayın. Demo anahtarını üretimde
-kullanmayın. Private key kaynak depoya, NuGet paketine veya uygulama kurulumuna girmez.
-Public key uygulamanın güvenilen dağıtımına sabitlenir; public key gizli değildir.
+Define the protected operations, inventory, OS/runtime, offline behavior, failure presentation, and trusted repair process. The sample's assumptions are not a customer's requirements.
 
-İmzalama aracı yerel PEM dosyası okur. HSM/KMS entegrasyonu, anahtar erişim denetimi,
-rol ayrımı ve imzalama audit logları bu projede uygulanmamıştır; üretim altyapısına
-uyarlamanız gerekir.
+For runtime checks, test the target Windows x64 build with its EDR/antivirus and hotpatch environment. A passing signed-file test does not demonstrate that the runtime gate works. Check before preparing or consuming sensitive data; do not add a production fallback that disables the gate after failure.
 
-## Yayın sırası
+This is a reference implementation. Adapt it to the application and test the final deployed artifact.
 
-1. Public key ve gerekli dosya listesiyle uygulamayı derleyin.
-2. Uygulamaya ve doğrulama entegrasyonuna uygun obfuscation işlemlerini uygulayın.
-3. Varsa Authenticode veya dosya baytlarını değiştiren son dağıtım işlemlerini tamamlayın.
-4. Son dosyaların manifestini oluşturup artan pozitif release değeriyle imzalayın.
-5. İmzalı son çıktıyı ve gerçek kullanıcı işlemlerini test edin.
-6. Dosyaları, `integrity.json` ve `integrity.sig` ile birlikte güvenilen kanal üzerinden dağıtın.
+## Signing keys
 
-Obfuscation'ın native export isimlerini, public API'yi, JSON alanlarını veya
-reflection kullanan uygulama parçalarını kırmadığını doğrulayın. İstisnaları
-obfuscator yapılandırmasında tanımlayın. Bu repo bir obfuscation aracı içermez.
-Obfuscation sonrası test edilmeyen düz derlemenin sonuçları üretim çıktısına kanıt değildir.
+Use a product-specific key lifecycle. Keep the production private key in a protected signing environment; never include it in source control, a NuGet package, or an installation. Pin the public key in the trusted application distribution. Public keys are not secrets.
 
-Manifest imzalandıktan sonra korunan dosyalar değişirse doğrulama başarısız olur.
-Private key'i uygulamaya gömerek veya doğrulama hatasını yok sayarak bunu çözmeyin.
+The development signer reads a local PEM file. HSM/KMS integration, access controls, role separation, and signing audit logs are not implemented here.
 
-## İmzalama örneği
+## Release order
 
-Önce aracı derleyin:
+1. Build with the trusted public key and inventory.
+2. Apply obfuscation and final transformations.
+3. Apply Authenticode signing or other steps that change protected file bytes.
+4. Generate and sign the final manifest with an increasing positive release number.
+5. Verify the final files and real application workflows.
+6. Distribute through a trusted installer/updater with the manifest and signature.
+
+Obfuscation must preserve required APIs, native exports, JSON fields, and reflection contracts. No obfuscator is included. Testing an unobfuscated development build is not evidence for an altered production artifact.
+
+## Development signer
 
 ```powershell
 dotnet build tools/ManifestSigner -c Release
-```
 
-Yalnız yerel geliştirme için yeni anahtar oluşturma:
-
-```powershell
+# Development only. Existing key files are not overwritten.
 dotnet tools/ManifestSigner/bin/Release/net8.0/ManifestSigner.dll keygen .demo-keys
-```
 
-Mevcut anahtar dosyalarının üzerine yazılmaz. Kendi dağıtımınızı imzalama komutunun
-biçimi aşağıdadır; yollar örnektir, private key korunan imzalama ortamındadır:
-
-```powershell
+# Example paths; the private key stays in the protected signing environment.
 dotnet tools/ManifestSigner/bin/Release/net8.0/ManifestSigner.dll sign C:/SecureSigning/private.pem C:/Release/MyApp 2 rules.json
 ```
 
-Bu örnekte yalnız `rules.json` korunur. EXE/DLL de dahil edilecekse hem imzalayıcıya
-hem uygulamadaki `RequiredFiles` listesine aynı tam envanteri verin. İmzalayıcı
-sıfır olmayan exit code döndürürse çıktıyı yayımlamayın.
+This protects only `rules.json`. Include the exact same inventory in the signer and `RequiredFiles` policy. A nonzero signer exit means the output must not be released.
 
-## Sürüm ve güncelleme
+Invalid inventories, duplicates, self-inclusion of the manifest/signature, and size-limit failures are rejected before replacing the existing signed pair. Limits are 32 files, 32 MiB per file, and 64 MiB total. Later disk/write failures have no two-file atomic update guarantee: use a separate staging directory.
 
-Eski imzalı sürümü reddetmek için minimum sürüm güvenilen host/servisten gelmelidir.
-Değiştirilebilir uygulama klasöründeki yerel bir değer tüm klasörle birlikte geri
-alınabilir. Sunucuya erişilemiyorsa müşteri sözleşmesinde belirlenen davranışı
-uygulayın; minimum sürümü sessizce düşürmeyin.
+`tests/signer_process_tests.py` checks preservation of an existing pair and is included in `build-example-apps.ps1`.
 
-Çalışan uygulamanın dosyalarını parça parça değiştirmeyin. Ayrı staging dizininde
-doğrulayın; uygulamayı durdurup güvenilir updater üzerinden geçiş yapın.
-Updater/kurulum güvenliği bu kütüphanenin dışında tasarlanmalıdır.
+## Updates and rollback
 
-Tek sabitlenmiş public key desteklenir. Otomatik key ring, iptal servisi ve rotasyon
-yoktur. Anahtar değişimi güvenilen uygulama güncellemesiyle birlikte yapılmalıdır.
-Anahtar sızıntısında yeni güvenilir anahtar/doğrulayıcı dağıtımı ve minimum sürüm
-politikasının yenilenmesi gerekir.
+A minimum accepted release must come from a trusted host/service or application distribution. A value beside replaceable files can be rolled back with them. Do not silently lower the floor when a service is unreachable.
 
-## Üretim kabul listesi
+Stage and verify a complete release separately. Stop the application before switching its files through a trusted updater. Installer/updater security is outside this library.
 
-- Temiz kurulum, güncelleme ve onarım akışları gerçek müşteri ortamında çalışıyor.
-- Değiştirilmiş içerik/imza, eksik dosya ve erişim hatası işlemi engelliyor.
-- Eski geçerli imzalı sürüm, güvenilen minimum politika altında reddediliyor.
-- Dosya onarımı aynı oturumu açmıyor; yeniden başlatma sonrası kontrol yapılıyor.
-- İşlem yalnız doğrulanmış kopyayı kullanıyor; şema/iş kuralları ayrıca doğrulanıyor.
-- Obfuscation uygulanmış son ürün test edildi; export/API/JSON sözleşmeleri korunuyor.
-- İmzalama anahtarı kurulum paketinde veya kaynak depoda bulunmuyor.
-- Gerçek dosya boyutlarında açılış, periyodik ve işlem öncesi gecikme ölçüldü.
-- Log kuyruğu büyümesi, timeout ve yanlış alarm desteği tanımlandı.
-- Sunucu yetkilendirmesi istemcinin `Success`/`Allowed` bayrağına dayanmıyor.
+One pinned public key is supported. Automatic key rings, revocation, and rotation services are not included. Key changes require trusted application updates. A leaked signing key requires a new trusted key/verifier and an updated release policy.
 
-Bu kontroller müşteri projesine özel geliştirme ihtiyacını ortadan kaldırmaz.
-Runtime gözlemi/bellek müdahalesi bu kütüphanenin koruma kapsamı değildir.
+## Acceptance checklist
+
+- Clean installation, update, repair, and restart work on the target platform.
+- Tampered/missing files and invalid signatures block the operation.
+- Older signed releases fail below the trusted minimum.
+- Repair does not reopen a blocked session.
+- Business code consumes verified copies and validates its own schema.
+- Selected entry changes are detected before the sensitive call.
+- Legitimate security software and OS updates have a compatibility/recovery path.
+- The final obfuscated/signed build preserves API, export, and JSON contracts.
+- Signing private keys are absent from source and the package.
+- Startup, periodic, and operation latency are measured with real file sizes.
+- Log limits, failure presentation, and support procedures are defined.
+- Server authorization does not trust the client's success result as evidence.
+
+The runtime check is local defense in depth, not process isolation or a replacement for a server trust boundary.
